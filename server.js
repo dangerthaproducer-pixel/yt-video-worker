@@ -6,13 +6,42 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { google } = require("googleapis");
+const multer = require("multer");
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
+// Persistent audio storage dir
+const AUDIO_DIR = path.join(os.tmpdir(), "yt-audio-store");
+if (!fs.existsSync(AUDIO_DIR)) fs.mkdirSync(AUDIO_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: AUDIO_DIR,
+  filename: (_, file, cb) => {
+    const safe = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+    cb(null, `${Date.now()}-${safe}`);
+  },
+});
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } }); // 50MB max per file
+
+// Serve uploaded audio files publicly
+app.use("/audio", express.static(AUDIO_DIR));
+
 app.get("/health", (_, res) => res.json({ status: "ok" }));
+
+// Upload one or more audio files — returns public URLs
+app.post("/upload-audio", upload.array("files", 50), (req, res) => {
+  if (!req.files || !req.files.length) return res.status(400).json({ error: "No files" });
+  const base = `${req.protocol}://${req.get("host")}`;
+  const urls = req.files.map(f => ({
+    filename: f.filename,
+    originalname: f.originalname,
+    url: `${base}/audio/${f.filename}`,
+  }));
+  res.json({ success: true, files: urls });
+});
 
 app.post("/compile-and-upload", async (req, res) => {
   const { audioUrls, backgroundImageUrl, title, description, tags, scheduledFor, channelSlug, videoId, callbackUrl, workerSecret } = req.body;
