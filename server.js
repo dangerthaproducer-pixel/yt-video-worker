@@ -5,7 +5,6 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { createClient } = require("@supabase/supabase-js");
 const { google } = require("googleapis");
 
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -16,19 +15,18 @@ app.use(express.json({ limit: "10mb" }));
 app.get("/health", (_, res) => res.json({ status: "ok" }));
 
 app.post("/compile-and-upload", async (req, res) => {
-  const { audioUrls, backgroundImageUrl, title, description, tags, scheduledFor, channelSlug, videoId, callbackUrl } = req.body;
-  
+  const { audioUrls, backgroundImageUrl, title, description, tags, scheduledFor, channelSlug, videoId, callbackUrl, workerSecret } = req.body;
+
   res.json({ accepted: true, message: "Job started" });
-  
-  // Run async after response sent
-  processJob({ audioUrls, backgroundImageUrl, title, description, tags, scheduledFor, channelSlug, videoId, callbackUrl })
+
+  processJob({ audioUrls, backgroundImageUrl, title, description, tags, scheduledFor, channelSlug, videoId, callbackUrl, workerSecret })
     .catch(err => {
       console.error("Job failed:", err.message);
-      if (callbackUrl) fetch(callbackUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ videoId, error: err.message }) }).catch(() => {});
+      if (callbackUrl) fetch(callbackUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ videoId, error: err.message, workerSecret }) }).catch(() => {});
     });
 });
 
-async function processJob({ audioUrls, backgroundImageUrl, title, description, tags, scheduledFor, channelSlug, videoId, callbackUrl }) {
+async function processJob({ audioUrls, backgroundImageUrl, title, description, tags, scheduledFor, channelSlug, videoId, callbackUrl, workerSecret }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "yt-"));
   console.log(`[${videoId}] Starting compilation of ${audioUrls.length} audio files`);
 
@@ -96,12 +94,11 @@ async function processJob({ audioUrls, backgroundImageUrl, title, description, t
     const youtubeVideoId = await uploadToYouTube({ videoPath, title, description, tags, scheduledFor, channelSlug });
     console.log(`[${videoId}] Uploaded to YouTube: ${youtubeVideoId}`);
 
-    // Callback Vercel
     if (callbackUrl) {
       await fetch(callbackUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId, youtubeVideoId, success: true })
+        body: JSON.stringify({ videoId, youtubeVideoId, youtubeUrl: `https://youtu.be/${youtubeVideoId}`, success: true, workerSecret })
       });
     }
 
